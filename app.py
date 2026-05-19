@@ -422,21 +422,48 @@ else:
     
     st.subheader("Strategy 2: Normalisation regime-shift strategy")
 
-def run_normalisation_shift_backtest(prices, lookback=30, p_threshold=P_THRESHOLD):
+def run_normalisation_hold_until_break_backtest(prices, lookback=30, p_threshold=P_THRESHOLD):
     returns = prices.pct_change()
+    positions = {}
     results = []
+    trade_log = []
 
     for i in range(lookback + 2, len(prices) - 1):
         signal_date = prices.index[i]
         trade_date = prices.index[i + 1]
 
-        longs = []
-        shorts = []
+        daily_position_returns = []
 
+        # 1. Update existing positions and exit if normality breaks
+        for ticker in list(positions.keys()):
+            window = prices[ticker].iloc[i - lookback:i].dropna()
+
+            if len(window) < lookback:
+                del positions[ticker]
+                continue
+
+            window_returns = window.pct_change().dropna()
+
+            try:
+                pval = shapiro(window_returns).pvalue
+            except:
+                del positions[ticker]
+                continue
+
+            if pval <= p_threshold:
+                trade_log.append({
+                    "Date": signal_date,
+                    "Ticker": ticker,
+                    "Action": "EXIT",
+                    "Side": positions[ticker],
+                    "Reason": "Normality broken",
+                    "P-value": pval,
+                })
+                del positions[ticker]
+
+        # 2. Look for new entries: non-normal yesterday, normal today
         for ticker in prices.columns:
-            s = prices[ticker].dropna()
-
-            if len(s) < i + 1:
+            if ticker in positions:
                 continue
 
             prior_window = prices[ticker].iloc[i - lookback - 1:i - 1].dropna()
@@ -447,9 +474,6 @@ def run_normalisation_shift_backtest(prices, lookback=30, p_threshold=P_THRESHOL
 
             prior_returns = prior_window.pct_change().dropna()
             current_returns = current_window.pct_change().dropna()
-
-            if len(prior_returns) < lookback - 1 or len(current_returns) < lookback - 1:
-                continue
 
             try:
                 prior_p = shapiro(prior_returns).pvalue
@@ -463,61 +487,54 @@ def run_normalisation_shift_backtest(prices, lookback=30, p_threshold=P_THRESHOL
             trend = trend_score(current_window)
 
             if trend > 0:
-                longs.append({
+                positions[ticker] = "LONG"
+                trade_log.append({
+                    "Date": signal_date,
                     "Ticker": ticker,
-                    "Trend": trend,
-                    "Prior p-value": prior_p,
-                    "Current p-value": current_p
+                    "Action": "ENTER",
+                    "Side": "LONG",
+                    "Reason": "Normalised with positive trend",
+                    "P-value": current_p,
                 })
 
             elif trend < 0:
-                shorts.append({
+                positions[ticker] = "SHORT"
+                trade_log.append({
+                    "Date": signal_date,
                     "Ticker": ticker,
-                    "Trend": trend,
-                    "Prior p-value": prior_p,
-                    "Current p-value": current_p
+                    "Action": "ENTER",
+                    "Side": "SHORT",
+                    "Reason": "Normalised with negative trend",
+                    "P-value": current_p,
                 })
 
-        longs = pd.DataFrame(longs)
-        shorts = pd.DataFrame(shorts)
-
-        if longs.empty and shorts.empty:
-            continue
-
+        # 3. Calculate next-day P&L from active positions
         next_returns = returns.loc[trade_date]
 
-        if not longs.empty:
-            long_return = next_returns[longs["Ticker"]].mean()
-            long_names = ", ".join(longs["Ticker"])
-        else:
-            long_return = 0
-            long_names = ""
+        long_tickers = [t for t, side in positions.items() if side == "LONG"]
+        short_tickers = [t for t, side in positions.items() if side == "SHORT"]
 
-        if not shorts.empty:
-            short_return = next_returns[shorts["Ticker"]].mean()
-            short_names = ", ".join(shorts["Ticker"])
-        else:
-            short_return = 0
-            short_names = ""
+        long_return = next_returns[long_tickers].mean() if long_tickers else 0
+        short_return = next_returns[short_tickers].mean() if short_tickers else 0
 
         portfolio_return = long_return - short_return
 
         results.append({
             "Date": trade_date,
             "Return": portfolio_return,
-            "Longs": long_names,
-            "Shorts": short_names,
-            "Number longs": len(longs),
-            "Number shorts": len(shorts)
+            "Number longs": len(long_tickers),
+            "Number shorts": len(short_tickers),
+            "Longs": ", ".join(long_tickers),
+            "Shorts": ", ".join(short_tickers),
         })
 
-    return pd.DataFrame(results)
+    return pd.DataFrame(results), pd.DataFrame(trade_log)
 
 
-shift_bt = run_normalisation_shift_backtest(prices)
+shift_bt, shift_trades = run_normalisation_hold_until_break_backtest(prices)
 
 if shift_bt.empty:
-    st.write("No normalisation regime-shift trades generated. Try lowering the threshold or extending the backtest period.")
+    st.write("No Strategy 2 trades generated.")
 else:
     shift_bt = shift_bt.dropna()
     shift_bt["Equity curve"] = (1 + shift_bt["Return"]).cumprod()
@@ -544,5 +561,25 @@ else:
 
     st.line_chart(shift_bt.set_index("Date")["Equity curve"])
 
-    st.markdown("**Recent Strategy 2 trades**")
+    st.write("Number of Strategy 2 trading days:", len(shift_bt))
+    st.write("Average number of longs:", round(shift_bt["Number longs"].mean(), 2))
+    st.write("Average number of shorts:", round(shift_bt["Number shorts"].mean(), 2))
+
+    st.markdown("**Recent Strategy 2 positions**")
     st.dataframe(shift_bt.tail(20), use_container_width=True)
+
+    st.markdown("**Recent Strategy 2 trade log**")
+    st.dataframe(shift_trades.tail(30), use_container_width=True)
+
+
+
+
+
+ 
+
+            
+            
+                
+        
+
+    c1,
