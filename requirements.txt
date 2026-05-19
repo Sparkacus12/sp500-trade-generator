@@ -6,3 +6,4 @@ scipy
 plotly
 lxml
 html5lib
+requests
