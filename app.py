@@ -9,7 +9,7 @@ st.set_page_config(page_title="S&P 500 Trade Generator", layout="wide")
 st.title("S&P 500 Trade Generator")
 
 LOOKBACK = 30
-P_THRESHOLD = 0.05
+P_THRESHOLD = 0.10
 
 @st.cache_data(ttl=60 * 60 * 12)
 def get_sp500():
