@@ -29,7 +29,7 @@ def get_sp500():
 def get_prices(tickers):
     data = yf.download(
         tickers,
-        period="90d",
+        period="3Y",
         auto_adjust=True,
         progress=False,
         threads=True
