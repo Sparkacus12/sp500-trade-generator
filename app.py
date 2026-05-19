@@ -315,3 +315,107 @@ with col2:
         macro_table.tail(10).sort_values("Macro score"),
         use_container_width=True
     )
+    
+    st.subheader("Backtest: daily long/short strategy")
+
+def run_backtest(prices, lookback=30, p_threshold=P_THRESHOLD):
+    returns = prices.pct_change()
+    results = []
+
+    for i in range(lookback + 1, len(prices) - 1):
+        signal_date = prices.index[i]
+        trade_date = prices.index[i + 1]
+
+        candidates = []
+
+        for ticker in prices.columns:
+            s = prices[ticker].iloc[i - lookback:i].dropna()
+
+            if len(s) < lookback:
+                continue
+
+            r = s.pct_change().dropna()
+
+            if len(r) < lookback - 1:
+                continue
+
+            try:
+                pval = shapiro(r).pvalue
+            except:
+                continue
+
+            if pval <= p_threshold:
+                continue
+
+            trend = trend_score(s)
+
+            candidates.append({
+                "Ticker": ticker,
+                "Trend": trend,
+                "P-value": pval
+            })
+
+        c = pd.DataFrame(candidates)
+
+        if c.empty:
+            continue
+
+        longs = (
+            c[c["Trend"] > 0]
+            .sort_values("Trend", ascending=False)
+            .head(3)
+        )
+
+        shorts = (
+            c[c["Trend"] < 0]
+            .sort_values("Trend", ascending=True)
+            .head(3)
+        )
+
+        if len(longs) < 3 or len(shorts) < 3:
+            continue
+
+        next_returns = returns.loc[trade_date]
+
+        long_return = next_returns[longs["Ticker"]].mean()
+        short_return = next_returns[shorts["Ticker"]].mean()
+
+        portfolio_return = long_return - short_return
+
+        results.append({
+            "Date": trade_date,
+            "Return": portfolio_return,
+            "Longs": ", ".join(longs["Ticker"]),
+            "Shorts": ", ".join(shorts["Ticker"])
+        })
+
+    return pd.DataFrame(results)
+
+bt = run_backtest(prices)
+
+if bt.empty:
+    st.write("No backtest results generated. Try lowering the normality threshold.")
+else:
+    bt = bt.dropna()
+    bt["Equity curve"] = (1 + bt["Return"]).cumprod()
+
+    total_return = bt["Equity curve"].iloc[-1] - 1
+    annualised_return = bt["Equity curve"].iloc[-1] ** (252 / len(bt)) - 1
+    annualised_vol = bt["Return"].std() * np.sqrt(252)
+    sharpe = bt["Return"].mean() / bt["Return"].std() * np.sqrt(252)
+
+    running_max = bt["Equity curve"].cummax()
+    drawdown = bt["Equity curve"] / running_max - 1
+    max_drawdown = drawdown.min()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Total return", f"{total_return:.2%}")
+    c2.metric("Annualised return", f"{annualised_return:.2%}")
+    c3.metric("Sharpe ratio", f"{sharpe:.2f}")
+    c4.metric("Max drawdown", f"{max_drawdown:.2%}")
+
+    st.line_chart(bt.set_index("Date")["Equity curve"])
+
+    st.markdown("**Recent backtest trades**")
+    st.dataframe(bt.tail(20), use_container_width=True)
