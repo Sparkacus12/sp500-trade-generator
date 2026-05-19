@@ -13,8 +13,15 @@ P_THRESHOLD = 0.05
 
 @st.cache_data(ttl=60 * 60 * 12)
 def get_sp500():
+    import requests
+    from io import StringIO
+
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    table = pd.read_html(url)[0]
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    html = requests.get(url, headers=headers, timeout=20).text
+    table = pd.read_html(StringIO(html))[0]
+
     table["Ticker"] = table["Symbol"].str.replace(".", "-", regex=False)
     return table[["Ticker", "Security", "GICS Sector"]]
 
