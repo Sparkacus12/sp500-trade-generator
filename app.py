@@ -252,7 +252,42 @@ def macro_score(sector, macro_prices):
 
 macro_prices = get_macro_prices()
 
-df["Macro score"] = df["GICS Sector"].apply(lambda x: macro_score(x, macro_prices))
+def stock_relative_strength(ticker, sector, prices, macro_prices):
+    try:
+        sector_etf = MACRO_TICKERS.get(sector)
+
+        stock_series = prices[ticker].dropna()
+        sector_series = macro_prices[sector_etf].dropna()
+
+        stock_ret = stock_series.iloc[-1] / stock_series.iloc[-30] - 1
+        sector_ret = sector_series.iloc[-1] / sector_series.iloc[-30] - 1
+
+        return (stock_ret - sector_ret) * 100
+
+    except:
+        return 0
+
+macro_scores = []
+
+for _, row in df.iterrows():
+
+    sector_component = macro_score(
+        row["GICS Sector"],
+        macro_prices
+    )
+
+    relative_strength = stock_relative_strength(
+        row["Ticker"],
+        row["GICS Sector"],
+        prices,
+        macro_prices
+    )
+
+    total_score = sector_component + relative_strength
+
+    macro_scores.append(total_score)
+
+df["Macro score"] = macro_scores
 
 df["Macro signal"] = np.where(
     df["Macro score"] > 2,
