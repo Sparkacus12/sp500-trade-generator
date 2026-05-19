@@ -212,7 +212,7 @@ MACRO_TICKERS = {
 def get_macro_prices():
     data = yf.download(
         list(MACRO_TICKERS.values()),
-        period="18mo",
+        period="3y",
         auto_adjust=True,
         progress=False,
         threads=True
