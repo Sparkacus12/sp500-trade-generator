@@ -1,4 +1,4 @@
-import streamlit as st
+no import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -187,3 +187,96 @@ st.caption(
     "Uses Yahoo Finance adjusted daily prices via yfinance. "
     "Normality test is Shapiro-Wilk on last 30 daily returns."
 )
+st.subheader("Macro-earnings overlay")
+
+MACRO_TICKERS = {
+    "Market": "SPY",
+    "Credit": "HYG",
+    "Rates": "TLT",
+    "Dollar": "UUP",
+    "Oil": "USO",
+    "Communication Services": "XLC",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Energy": "XLE",
+    "Financials": "XLF",
+    "Health Care": "XLV",
+    "Industrials": "XLI",
+    "Information Technology": "XLK",
+    "Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
+}
+
+@st.cache_data(ttl=60 * 60 * 6)
+def get_macro_prices():
+    data = yf.download(
+        list(MACRO_TICKERS.values()),
+        period="90d",
+        auto_adjust=True,
+        progress=False,
+        threads=True
+    )
+    return data["Close"].dropna(axis=1, how="all").ffill()
+
+def macro_return(prices, ticker, days=30):
+    if ticker not in prices.columns:
+        return 0
+    s = prices[ticker].dropna()
+    if len(s) < days + 1:
+        return 0
+    return s.iloc[-1] / s.iloc[-days] - 1
+
+def macro_score(sector, macro_prices):
+    sector_etf = MACRO_TICKERS.get(sector)
+
+    sector_mom = macro_return(macro_prices, sector_etf)
+    market_mom = macro_return(macro_prices, "SPY")
+    credit_mom = macro_return(macro_prices, "HYG")
+    rates_mom = macro_return(macro_prices, "TLT")
+    dollar_mom = macro_return(macro_prices, "UUP")
+    oil_mom = macro_return(macro_prices, "USO")
+
+    score = (
+        45 * sector_mom +
+        25 * market_mom +
+        20 * credit_mom -
+        10 * rates_mom -
+        10 * dollar_mom
+    )
+
+    if sector == "Energy":
+        score += 25 * oil_mom
+
+    return score
+
+macro_prices = get_macro_prices()
+
+df["Macro score"] = df["GICS Sector"].apply(lambda x: macro_score(x, macro_prices))
+
+df["Macro signal"] = np.where(
+    df["Macro score"] > 2,
+    "Positive macro-earnings overlay",
+    np.where(
+        df["Macro score"] < -2,
+        "Negative macro-earnings overlay",
+        "Neutral"
+    )
+)
+
+macro_table = df[
+    ["Ticker", "Security", "GICS Sector", "Macro score", "Macro signal"]
+].sort_values("Macro score", ascending=False)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("**Top positive macro overlays**")
+    st.dataframe(macro_table.head(10), use_container_width=True)
+
+with col2:
+    st.markdown("**Top negative macro overlays**")
+    st.dataframe(
+        macro_table.tail(10).sort_values("Macro score"),
+        use_container_width=True
+    )
