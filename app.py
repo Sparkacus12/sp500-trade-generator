@@ -419,3 +419,130 @@ else:
 
     st.markdown("**Recent backtest trades**")
     st.dataframe(bt.tail(20), use_container_width=True)
+    
+    st.subheader("Strategy 2: Normalisation regime-shift strategy")
+
+def run_normalisation_shift_backtest(prices, lookback=30, p_threshold=P_THRESHOLD):
+    returns = prices.pct_change()
+    results = []
+
+    for i in range(lookback + 2, len(prices) - 1):
+        signal_date = prices.index[i]
+        trade_date = prices.index[i + 1]
+
+        longs = []
+        shorts = []
+
+        for ticker in prices.columns:
+            s = prices[ticker].dropna()
+
+            if len(s) < i + 1:
+                continue
+
+            prior_window = prices[ticker].iloc[i - lookback - 1:i - 1].dropna()
+            current_window = prices[ticker].iloc[i - lookback:i].dropna()
+
+            if len(prior_window) < lookback or len(current_window) < lookback:
+                continue
+
+            prior_returns = prior_window.pct_change().dropna()
+            current_returns = current_window.pct_change().dropna()
+
+            if len(prior_returns) < lookback - 1 or len(current_returns) < lookback - 1:
+                continue
+
+            try:
+                prior_p = shapiro(prior_returns).pvalue
+                current_p = shapiro(current_returns).pvalue
+            except:
+                continue
+
+            if not (prior_p <= p_threshold and current_p > p_threshold):
+                continue
+
+            trend = trend_score(current_window)
+
+            if trend > 0:
+                longs.append({
+                    "Ticker": ticker,
+                    "Trend": trend,
+                    "Prior p-value": prior_p,
+                    "Current p-value": current_p
+                })
+
+            elif trend < 0:
+                shorts.append({
+                    "Ticker": ticker,
+                    "Trend": trend,
+                    "Prior p-value": prior_p,
+                    "Current p-value": current_p
+                })
+
+        longs = pd.DataFrame(longs)
+        shorts = pd.DataFrame(shorts)
+
+        if longs.empty and shorts.empty:
+            continue
+
+        next_returns = returns.loc[trade_date]
+
+        if not longs.empty:
+            long_return = next_returns[longs["Ticker"]].mean()
+            long_names = ", ".join(longs["Ticker"])
+        else:
+            long_return = 0
+            long_names = ""
+
+        if not shorts.empty:
+            short_return = next_returns[shorts["Ticker"]].mean()
+            short_names = ", ".join(shorts["Ticker"])
+        else:
+            short_return = 0
+            short_names = ""
+
+        portfolio_return = long_return - short_return
+
+        results.append({
+            "Date": trade_date,
+            "Return": portfolio_return,
+            "Longs": long_names,
+            "Shorts": short_names,
+            "Number longs": len(longs),
+            "Number shorts": len(shorts)
+        })
+
+    return pd.DataFrame(results)
+
+
+shift_bt = run_normalisation_shift_backtest(prices)
+
+if shift_bt.empty:
+    st.write("No normalisation regime-shift trades generated. Try lowering the threshold or extending the backtest period.")
+else:
+    shift_bt = shift_bt.dropna()
+    shift_bt["Equity curve"] = (1 + shift_bt["Return"]).cumprod()
+
+    shift_total_return = shift_bt["Equity curve"].iloc[-1] - 1
+    shift_annualised_return = shift_bt["Equity curve"].iloc[-1] ** (252 / len(shift_bt)) - 1
+    shift_annualised_vol = shift_bt["Return"].std() * np.sqrt(252)
+
+    if shift_bt["Return"].std() != 0:
+        shift_sharpe = shift_bt["Return"].mean() / shift_bt["Return"].std() * np.sqrt(252)
+    else:
+        shift_sharpe = np.nan
+
+    shift_running_max = shift_bt["Equity curve"].cummax()
+    shift_drawdown = shift_bt["Equity curve"] / shift_running_max - 1
+    shift_max_drawdown = shift_drawdown.min()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Total return", f"{shift_total_return:.2%}")
+    c2.metric("Annualised return", f"{shift_annualised_return:.2%}")
+    c3.metric("Sharpe ratio", f"{shift_sharpe:.2f}")
+    c4.metric("Max drawdown", f"{shift_max_drawdown:.2%}")
+
+    st.line_chart(shift_bt.set_index("Date")["Equity curve"])
+
+    st.markdown("**Recent Strategy 2 trades**")
+    st.dataframe(shift_bt.tail(20), use_container_width=True)
